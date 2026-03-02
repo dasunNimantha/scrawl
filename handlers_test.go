@@ -15,7 +15,7 @@ import (
 
 func setupTestDB(t *testing.T) func() {
 	t.Helper()
-	dbPath := "test_textbin_" + t.Name() + ".db"
+	dbPath := "test_scrawl_" + t.Name() + ".db"
 
 	var err error
 	db, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
@@ -68,7 +68,7 @@ func TestIndexPage(t *testing.T) {
 
 	body := readBody(t, resp)
 
-	assertContains(t, body, "<title>textbin</title>", "page title")
+	assertContains(t, body, "<title>scrawl</title>", "page title")
 	assertContains(t, body, `class="logo"`, "logo element")
 	assertContains(t, body, `class="sidebar"`, "sidebar")
 	assertContains(t, body, `class="input-title"`, "heading input")

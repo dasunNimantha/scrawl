@@ -30,7 +30,7 @@ func main() {
 
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "textbin.db"
+		dbPath = "scrawl.db"
 	}
 
 	var err error
@@ -57,7 +57,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/entries/{id}", handleDelete)
 	mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
 
-	log.Printf("textbin running on http://localhost:%s", port)
+	log.Printf("scrawl running on http://localhost:%s", port)
 	if err := http.ListenAndServe(":"+port, gzipHandler(mux)); err != nil {
 		log.Fatal(err)
 	}

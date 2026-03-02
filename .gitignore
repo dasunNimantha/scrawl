@@ -1,5 +1,5 @@
-textbin
-textbin.exe
+scrawl
+scrawl.exe
 *.db
 *.db-wal
 *.db-shm

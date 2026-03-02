@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc
+
+      - name: Test
+        run: go test -v -count=1 ./...
+
+      - name: Build
+        run: CGO_ENABLED=1 go build -ldflags="-s -w" -o scrawl .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrawl-linux-amd64
+          path: scrawl
