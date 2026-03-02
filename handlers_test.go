@@ -238,7 +238,7 @@ func TestViewEntry_NotFound(t *testing.T) {
 	srv := httptest.NewServer(newMux())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/e/nonexistent")
+	resp, err := http.Get(srv.URL + "/e/deadbeef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,6 +246,24 @@ func TestViewEntry_NotFound(t *testing.T) {
 
 	if resp.StatusCode != 404 {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestViewEntry_InvalidID(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/e/not-hex!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected 404 for invalid ID, got %d", resp.StatusCode)
 	}
 }
 
@@ -487,7 +505,7 @@ func TestEditEntry_NotFound(t *testing.T) {
 	defer srv.Close()
 
 	form := url.Values{"title": {"x"}, "body": {"y"}}
-	req, _ := http.NewRequest("PUT", srv.URL+"/api/entries/nonexistent", strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/entries/deadbeef", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -623,7 +641,7 @@ func TestDeleteEntry_NotFound(t *testing.T) {
 	srv := httptest.NewServer(newMux())
 	defer srv.Close()
 
-	req, _ := http.NewRequest("DELETE", srv.URL+"/api/entries/nonexistent", nil)
+	req, _ := http.NewRequest("DELETE", srv.URL+"/api/entries/deadbeef", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -733,6 +751,56 @@ func TestSidebarDoesNotContainBody(t *testing.T) {
 	// For a basic check: the index page should contain the title but the body text
 	// should only appear if the entry is being viewed
 	assertNotContains(t, body, "THIS_UNIQUE_BODY_TEXT_SHOULD_NOT_APPEAR", "body should not be in sidebar response")
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(securityHeaders(newMux()))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	headers := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":       "DENY",
+		"Referrer-Policy":       "strict-origin-when-cross-origin",
+	}
+	for name, expected := range headers {
+		if got := resp.Header.Get(name); got != expected {
+			t.Errorf("expected %s=%q, got %q", name, expected, got)
+		}
+	}
+
+	csp := resp.Header.Get("Content-Security-Policy")
+	if csp == "" {
+		t.Error("expected Content-Security-Policy header")
+	}
+}
+
+func TestInputSanitization(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createTestEntry(t, srv.URL, "  Padded Title  ", "body with \x00 null")
+
+	resp, err := http.Get(srv.URL + "/e/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Padded Title", "title should be trimmed")
+	assertNotContains(t, body, "\x00", "null bytes should be stripped")
 }
 
 // --- helpers ---

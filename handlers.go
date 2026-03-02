@@ -6,8 +6,11 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 )
 
 type Entry struct {
@@ -18,6 +21,10 @@ type Entry struct {
 }
 
 var tmpl *template.Template
+
+var validID = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+const maxTitleLen = 200
 
 func init() {
 	funcMap := template.FuncMap{
@@ -58,6 +65,19 @@ func generateID() string {
 	return hex.EncodeToString(b)
 }
 
+// sanitize strips control characters (except tab, newline, carriage return).
+func sanitize(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -80,14 +100,23 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 const maxBodySize = 128 * 1024 // 128KB
 
 func handleCreate(w http.ResponseWriter, r *http.Request) {
+	if !checkRateLimit(r) {
+		http.Error(w, "rate limit exceeded, try again later", 429)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
-	title := r.FormValue("title")
-	body := r.FormValue("body")
+	title := sanitize(strings.TrimSpace(r.FormValue("title")))
+	body := sanitize(r.FormValue("body"))
 
 	if title == "" || body == "" {
 		http.Error(w, "title and body are required", 400)
 		return
+	}
+
+	if len(title) > maxTitleLen {
+		title = title[:maxTitleLen]
 	}
 
 	id := generateID()
@@ -140,6 +169,10 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 
 func handleView(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !validID.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
 
 	entry, err := getEntry(id)
 	if err != nil {
@@ -161,15 +194,28 @@ func handleView(w http.ResponseWriter, r *http.Request) {
 
 func handleEdit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !validID.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
+
+	if !checkRateLimit(r) {
+		http.Error(w, "rate limit exceeded, try again later", 429)
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
-	title := r.FormValue("title")
-	body := r.FormValue("body")
+	title := sanitize(strings.TrimSpace(r.FormValue("title")))
+	body := sanitize(r.FormValue("body"))
 
 	if title == "" || body == "" {
 		http.Error(w, "title and body are required", 400)
 		return
+	}
+
+	if len(title) > maxTitleLen {
+		title = title[:maxTitleLen]
 	}
 
 	result, err := db.Exec("UPDATE entries SET title = ?, body = ? WHERE id = ?", title, body, id)
@@ -201,6 +247,10 @@ func handleEdit(w http.ResponseWriter, r *http.Request) {
 
 func handleEditForm(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !validID.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
 
 	entry, err := getEntry(id)
 	if err != nil {
@@ -213,6 +263,15 @@ func handleEditForm(w http.ResponseWriter, r *http.Request) {
 
 func handleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !validID.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
+
+	if !checkRateLimit(r) {
+		http.Error(w, "rate limit exceeded, try again later", 429)
+		return
+	}
 
 	result, err := db.Exec("DELETE FROM entries WHERE id = ?", id)
 	if err != nil {
