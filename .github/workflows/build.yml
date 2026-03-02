@@ -26,7 +26,7 @@ jobs:
         run: CGO_ENABLED=1 go build -ldflags="-s -w" -o scrawl .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: scrawl-linux-amd64
           path: scrawl
