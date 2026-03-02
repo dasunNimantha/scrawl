@@ -49,6 +49,13 @@ go build -o scrawl .
 
 Open [http://localhost:8080](http://localhost:8080).
 
+### Docker
+
+```bash
+docker build -t scrawl .
+docker run -p 8080:8080 -v scrawl-data:/data scrawl
+```
+
 ## Configuration
 
 | Variable | Default | Description |
