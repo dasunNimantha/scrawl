@@ -1,0 +1,6 @@
+textbin
+textbin.exe
+*.db
+*.db-wal
+*.db-shm
+.env

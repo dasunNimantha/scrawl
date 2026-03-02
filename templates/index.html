@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>textbin</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <a href="/" class="logo">textbin</a>
+            </div>
+            <nav id="entries-list" class="entries-list">
+                {{template "entry-items" .}}
+            </nav>
+        </aside>
+        <main class="main">
+            <div id="editor" class="editor">
+                <form hx-post="/api/entries" hx-swap="innerHTML" hx-target="#form-area">
+                    <div id="form-area">
+                        {{template "form-fields" .}}
+                    </div>
+                </form>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
+
+{{define "form-fields"}}
+<input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
+<textarea name="body" placeholder="Paste your text here...&#10;&#10;  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
+<div class="form-actions">
+    <button type="submit" class="btn btn-primary">Save</button>
+</div>
+{{end}}
+
+{{define "entry-items"}}
+{{range .Entries}}
+<a href="/e/{{.ID}}" class="entry-item">
+    <span class="entry-title">{{.Title}}</span>
+    <span class="entry-time">{{timeago .CreatedAt}}</span>
+</a>
+{{else}}
+<div class="empty-state">No entries yet</div>
+{{end}}
+{{end}}
+
+{{define "entry-list"}}
+{{range .Entries}}
+<a href="/e/{{.ID}}" class="entry-item">
+    <span class="entry-title">{{.Title}}</span>
+    <span class="entry-time">{{timeago .CreatedAt}}</span>
+</a>
+{{end}}
+{{if .Entries}}
+<button class="load-more"
+    hx-get="/api/entries?page={{.Page}}"
+    hx-target="closest button"
+    hx-swap="outerHTML">
+    Load more
+</button>
+{{end}}
+{{end}}
+
+{{define "created-response"}}
+<div class="success-banner" id="success-banner">
+    <span>Saved! Share link:</span>
+    <code class="share-link" id="share-url">/e/{{.ID}}</code>
+    <button type="button" class="btn btn-small" onclick="copyLink('{{.ID}}')">Copy</button>
+    <button type="button" class="btn btn-small" onclick="newEntry()">New</button>
+</div>
+<script>
+function copyLink(id) {
+    const url = window.location.origin + '/e/' + id;
+    navigator.clipboard.writeText(url).then(() => {
+        document.querySelector('#success-banner .btn').textContent = 'Copied!';
+        setTimeout(() => {
+            document.querySelector('#success-banner .btn').textContent = 'Copy';
+        }, 2000);
+    });
+}
+function newEntry() {
+    document.getElementById('form-area').innerHTML = `
+        <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
+        <textarea name="body" placeholder="Paste your text here...\n\n  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+    `;
+    document.querySelector('.input-title').focus();
+}
+// Refresh sidebar
+document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
+</script>
+{{end}}
