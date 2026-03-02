@@ -1,11 +1,15 @@
 package main
 
 import (
+	"compress/gzip"
 	"database/sql"
 	"embed"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -48,10 +52,13 @@ func main() {
 	mux.HandleFunc("POST /api/entries", handleCreate)
 	mux.HandleFunc("GET /api/entries", handleList)
 	mux.HandleFunc("GET /e/{id}", handleView)
-	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	mux.HandleFunc("PUT /api/entries/{id}", handleEdit)
+	mux.HandleFunc("GET /api/entries/{id}/edit", handleEditForm)
+	mux.HandleFunc("DELETE /api/entries/{id}", handleDelete)
+	mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
 
 	log.Printf("textbin running on http://localhost:%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.ListenAndServe(":"+port, gzipHandler(mux)); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -67,4 +74,47 @@ func initDB() error {
 		CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at DESC);
 	`)
 	return err
+}
+
+func cacheStatic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		next.ServeHTTP(w, r)
+	})
+}
+
+var gzipPool = sync.Pool{
+	New: func() any {
+		w, _ := gzip.NewWriterLevel(io.Discard, gzip.DefaultCompression)
+		return w
+	},
+}
+
+type gzipResponseWriter struct {
+	io.Writer
+	http.ResponseWriter
+}
+
+func (w gzipResponseWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
+func gzipHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		gz := gzipPool.Get().(*gzip.Writer)
+		gz.Reset(w)
+		defer func() {
+			gz.Close()
+			gzipPool.Put(gz)
+		}()
+
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length")
+		next.ServeHTTP(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
+	})
 }

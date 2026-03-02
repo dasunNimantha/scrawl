@@ -5,28 +5,128 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>textbin</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+    <script src="/static/htmx.min.js"></script>
 </head>
 <body>
     <div class="layout">
         <aside class="sidebar">
             <div class="sidebar-header">
                 <a href="/" class="logo">textbin</a>
+                <button class="sidebar-new-btn" onclick="showEditor()">+ New</button>
+            </div>
+            <div class="sidebar-search">
+                <input type="text" id="search-input" placeholder="Search..." oninput="filterEntries(this.value)">
             </div>
             <nav id="entries-list" class="entries-list">
                 {{template "entry-items" .}}
             </nav>
         </aside>
         <main class="main">
-            <div id="editor" class="editor">
-                <form hx-post="/api/entries" hx-swap="innerHTML" hx-target="#form-area">
-                    <div id="form-area">
-                        {{template "form-fields" .}}
-                    </div>
+            <div id="content-area" class="editor">
+                {{if .ViewEntry}}
+                    {{template "view-content" .ViewEntry}}
+                {{else}}
+                <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
+                    {{template "form-fields" .}}
                 </form>
+                {{end}}
             </div>
         </main>
     </div>
+
+    <div class="modal-overlay" id="delete-modal">
+        <div class="modal">
+            <p class="modal-text">Delete this entry? This can't be undone.</p>
+            <div class="modal-actions">
+                <button class="btn btn-small" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger btn-small" id="confirm-delete-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function copyLink(id) {
+        const url = window.location.origin + '/e/' + id;
+        navigator.clipboard.writeText(url).then(() => {
+            const btn = document.getElementById('copy-btn-' + id);
+            if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy Link', 2000); }
+        });
+    }
+    function copyText(id) {
+        const pre = document.querySelector('.view-body');
+        if (!pre) return;
+        navigator.clipboard.writeText(pre.textContent).then(() => {
+            const btn = document.getElementById('copytxt-btn-' + id);
+            if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy Text', 2000); }
+        });
+    }
+    function showEditor() {
+        history.pushState(null, '', '/');
+        clearActive();
+        document.getElementById('content-area').innerHTML = `
+            <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
+                <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
+                <textarea name="body" placeholder="Paste your text here...\n\n  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        `;
+        htmx.process(document.getElementById('content-area'));
+        document.querySelector('.input-title').focus();
+    }
+    function confirmDelete(id) {
+        const modal = document.getElementById('delete-modal');
+        modal.classList.add('visible');
+        document.getElementById('confirm-delete-btn').onclick = function() {
+            closeModal();
+            htmx.ajax('DELETE', '/api/entries/' + id, { target: '#content-area', swap: 'innerHTML' });
+        };
+    }
+    function closeModal() {
+        document.getElementById('delete-modal').classList.remove('visible');
+    }
+    document.getElementById('delete-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+    });
+    function setActive(id) {
+        clearActive();
+        document.querySelectorAll('.entry-item').forEach(el => {
+            if (el.getAttribute('href') === '/e/' + id) el.classList.add('active');
+        });
+    }
+    function clearActive() {
+        document.querySelectorAll('.entry-item.active').forEach(el => el.classList.remove('active'));
+    }
+    function filterEntries(q) {
+        q = q.toLowerCase();
+        document.querySelectorAll('.entry-item').forEach(el => {
+            const title = el.querySelector('.entry-title').textContent.toLowerCase();
+            el.style.display = title.includes(q) ? '' : 'none';
+        });
+    }
+    document.body.addEventListener('htmx:afterSwap', function() {
+        const path = window.location.pathname;
+        if (path.startsWith('/e/')) setActive(path.split('/e/')[1]);
+    });
+    window.addEventListener('load', function() {
+        const path = window.location.pathname;
+        if (path.startsWith('/e/')) setActive(path.split('/e/')[1]);
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeModal();
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            const form = document.querySelector('#content-area form');
+            if (form) { e.preventDefault(); form.requestSubmit(); }
+        }
+        if (e.key === 'Tab' && e.target.classList.contains('input-body')) {
+            e.preventDefault();
+            const ta = e.target, s = ta.selectionStart, end = ta.selectionEnd;
+            ta.value = ta.value.substring(0, s) + '\t' + ta.value.substring(end);
+            ta.selectionStart = ta.selectionEnd = s + 1;
+        }
+    });
+    </script>
 </body>
 </html>
 
@@ -40,7 +140,7 @@
 
 {{define "entry-items"}}
 {{range .Entries}}
-<a href="/e/{{.ID}}" class="entry-item">
+<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()">
     <span class="entry-title">{{.Title}}</span>
     <span class="entry-time">{{timeago .CreatedAt}}</span>
 </a>
@@ -51,7 +151,7 @@
 
 {{define "entry-list"}}
 {{range .Entries}}
-<a href="/e/{{.ID}}" class="entry-item">
+<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()">
     <span class="entry-title">{{.Title}}</span>
     <span class="entry-time">{{timeago .CreatedAt}}</span>
 </a>
@@ -66,34 +166,99 @@
 {{end}}
 {{end}}
 
-{{define "created-response"}}
-<div class="success-banner" id="success-banner">
-    <span>Saved! Share link:</span>
-    <code class="share-link" id="share-url">/e/{{.ID}}</code>
-    <button type="button" class="btn btn-small" onclick="copyLink('{{.ID}}')">Copy</button>
-    <button type="button" class="btn btn-small" onclick="newEntry()">New</button>
-</div>
+{{define "view-content"}}
+<article class="view-content">
+    <div class="view-topbar">
+        <button class="btn btn-small" id="copytxt-btn-{{.ID}}" onclick="copyText('{{.ID}}')">Copy Text</button>
+        <button class="btn btn-small" id="copy-btn-{{.ID}}" onclick="copyLink('{{.ID}}')">Copy Link</button>
+        <button class="btn btn-small" hx-get="/api/entries/{{.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
+        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.ID}}')">Delete</button>
+    </div>
+    <h1 class="view-title">{{.Title}}</h1>
+    <time class="view-time">{{.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}</time>
+    <pre class="view-body">{{.Body}}</pre>
+</article>
+<script>setActive('{{.ID}}');</script>
+{{end}}
+
+{{define "edit-form"}}
+<form hx-put="/api/entries/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML">
+    <input type="text" name="title" value="{{.Title}}" class="input-title" required autofocus>
+    <textarea name="body" class="input-body" required>{{.Body}}</textarea>
+    <div class="form-actions">
+        <button type="button" class="btn btn-small" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+    </div>
+</form>
+{{end}}
+
+{{define "edited-response"}}
+<article class="view-content">
+    <div class="success-banner" id="success-banner">
+        <span>Updated!</span>
+    </div>
+    <div class="view-topbar">
+        <button class="btn btn-small" id="copytxt-btn-{{.Entry.ID}}" onclick="copyText('{{.Entry.ID}}')">Copy Text</button>
+        <button class="btn btn-small" id="copy-btn-{{.Entry.ID}}" onclick="copyLink('{{.Entry.ID}}')">Copy Link</button>
+        <button class="btn btn-small" hx-get="/api/entries/{{.Entry.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
+        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.Entry.ID}}')">Delete</button>
+    </div>
+    <h1 class="view-title">{{.Entry.Title}}</h1>
+    <time class="view-time">{{.Entry.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}</time>
+    <pre class="view-body">{{.Entry.Body}}</pre>
+</article>
 <script>
-function copyLink(id) {
-    const url = window.location.origin + '/e/' + id;
-    navigator.clipboard.writeText(url).then(() => {
-        document.querySelector('#success-banner .btn').textContent = 'Copied!';
-        setTimeout(() => {
-            document.querySelector('#success-banner .btn').textContent = 'Copy';
-        }, 2000);
-    });
-}
-function newEntry() {
-    document.getElementById('form-area').innerHTML = `
-        <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
-        <textarea name="body" placeholder="Paste your text here...\n\n  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
-        <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Save</button>
-        </div>
-    `;
-    document.querySelector('.input-title').focus();
-}
-// Refresh sidebar
-document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
+document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
+htmx.process(document.getElementById('entries-list'));
+setActive('{{.Entry.ID}}');
+setTimeout(() => {
+    const b = document.getElementById('success-banner');
+    if (b) { b.style.opacity = '0'; setTimeout(() => b.remove(), 300); }
+}, 2000);
+</script>
+{{end}}
+
+{{define "created-response"}}
+<article class="view-content">
+    <div class="success-banner" id="success-banner">
+        <span>Saved!</span>
+        <code class="share-link">/e/{{.ID}}</code>
+    </div>
+    <div class="view-topbar">
+        <button class="btn btn-small" id="copytxt-btn-{{.ID}}" onclick="copyText('{{.ID}}')">Copy Text</button>
+        <button class="btn btn-small" id="copy-btn-{{.ID}}" onclick="copyLink('{{.ID}}')">Copy Link</button>
+        <button class="btn btn-small" hx-get="/api/entries/{{.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
+        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.ID}}')">Delete</button>
+    </div>
+    <h1 class="view-title">{{.Entry.Title}}</h1>
+    <time class="view-time">just now</time>
+    <pre class="view-body">{{.Entry.Body}}</pre>
+</article>
+<script>
+document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
+htmx.process(document.getElementById('entries-list'));
+history.pushState(null, '', '/e/{{.ID}}');
+setActive('{{.ID}}');
+</script>
+{{end}}
+
+{{define "deleted-response"}}
+<div class="deleted-banner">Entry deleted.</div>
+<form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
+    <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
+    <textarea name="body" placeholder="Paste your text here...&#10;&#10;  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+</form>
+<script>
+document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{else}}<div class="empty-state">No entries yet</div>{{end}}`;
+htmx.process(document.getElementById('entries-list'));
+history.pushState(null, '', '/');
+clearActive();
+setTimeout(() => {
+    const b = document.querySelector('.deleted-banner');
+    if (b) { b.style.opacity = '0'; setTimeout(() => b.remove(), 300); }
+}, 2000);
 </script>
 {{end}}

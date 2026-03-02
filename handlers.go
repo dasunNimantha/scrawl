@@ -15,7 +15,6 @@ type Entry struct {
 	Title     string
 	Body      string
 	CreatedAt time.Time
-	TimeAgo   string
 }
 
 var tmpl *template.Template
@@ -65,7 +64,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := getRecentEntries(0)
+	entries, err := listEntries(0)
 	if err != nil {
 		log.Println("error fetching entries:", err)
 		http.Error(w, "Internal Server Error", 500)
@@ -73,11 +72,16 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmpl.ExecuteTemplate(w, "index.html", map[string]any{
-		"Entries": entries,
+		"Entries":   entries,
+		"ViewEntry": nil,
 	})
 }
 
+const maxBodySize = 128 * 1024 // 128KB
+
 func handleCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
 	title := r.FormValue("title")
 	body := r.FormValue("body")
 
@@ -95,10 +99,13 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	entry := Entry{ID: id, Title: title, Body: body, CreatedAt: time.Now()}
+	entries, _ := listEntries(0)
+
 	if r.Header.Get("HX-Request") == "true" {
-		entries, _ := getRecentEntries(0)
 		tmpl.ExecuteTemplate(w, "created-response", map[string]any{
 			"ID":      id,
+			"Entry":   entry,
 			"Entries": entries,
 		})
 		return
@@ -113,7 +120,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 		page = 0
 	}
 
-	entries, err := getRecentEntries(page)
+	entries, err := listEntries(page)
 	if err != nil {
 		http.Error(w, "Internal Server Error", 500)
 		return
@@ -134,26 +141,110 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 func handleView(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var entry Entry
-	var createdAt string
-	err := db.QueryRow("SELECT id, title, body, created_at FROM entries WHERE id = ?", id).
-		Scan(&entry.ID, &entry.Title, &entry.Body, &createdAt)
+	entry, err := getEntry(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	entry.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if r.Header.Get("HX-Request") == "true" {
+		tmpl.ExecuteTemplate(w, "view-content", entry)
+		return
+	}
 
-	tmpl.ExecuteTemplate(w, "view.html", entry)
+	entries, _ := listEntries(0)
+	tmpl.ExecuteTemplate(w, "index.html", map[string]any{
+		"Entries":   entries,
+		"ViewEntry": entry,
+	})
 }
 
-func getRecentEntries(page int) ([]Entry, error) {
+func handleEdit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
+	title := r.FormValue("title")
+	body := r.FormValue("body")
+
+	if title == "" || body == "" {
+		http.Error(w, "title and body are required", 400)
+		return
+	}
+
+	result, err := db.Exec("UPDATE entries SET title = ?, body = ? WHERE id = ?", title, body, id)
+	if err != nil {
+		log.Println("error updating entry:", err)
+		http.Error(w, "Internal Server Error", 500)
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	entry, _ := getEntry(id)
+
+	if r.Header.Get("HX-Request") == "true" {
+		entries, _ := listEntries(0)
+		tmpl.ExecuteTemplate(w, "edited-response", map[string]any{
+			"Entry":   entry,
+			"Entries": entries,
+		})
+		return
+	}
+
+	http.Redirect(w, r, "/e/"+id, http.StatusSeeOther)
+}
+
+func handleEditForm(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	entry, err := getEntry(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	tmpl.ExecuteTemplate(w, "edit-form", entry)
+}
+
+func handleDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	result, err := db.Exec("DELETE FROM entries WHERE id = ?", id)
+	if err != nil {
+		log.Println("error deleting entry:", err)
+		http.Error(w, "Internal Server Error", 500)
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		entries, _ := listEntries(0)
+		tmpl.ExecuteTemplate(w, "deleted-response", map[string]any{
+			"Entries": entries,
+		})
+		return
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// listEntries returns entries without body for sidebar display.
+func listEntries(page int) ([]Entry, error) {
 	limit := 20
 	offset := page * limit
 
 	rows, err := db.Query(
-		"SELECT id, title, body, created_at FROM entries ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT id, title, created_at FROM entries ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
 		limit, offset,
 	)
 	if err != nil {
@@ -165,11 +256,24 @@ func getRecentEntries(page int) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdAt string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Body, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &createdAt); err != nil {
 			continue
 		}
 		e.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+// getEntry returns a single entry with full body.
+func getEntry(id string) (*Entry, error) {
+	var entry Entry
+	var createdAt string
+	err := db.QueryRow("SELECT id, title, body, created_at FROM entries WHERE id = ?", id).
+		Scan(&entry.ID, &entry.Title, &entry.Body, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	entry.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	return &entry, nil
 }
