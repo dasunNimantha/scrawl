@@ -30,7 +30,7 @@ A blazingly fast, self-hosted text sharing app built with Go and SQLite. Drop in
 | **Copy buttons** | Copy shareable link or entry text to clipboard |
 | **Keyboard shortcuts** | `Ctrl+Enter` save, `Tab` indent, `Esc` close modal |
 | **Gzip compression** | All responses compressed on the fly |
-| **Security headers** | CSP, X-Frame-Options, rate limiting, input sanitization |
+| **Security headers** | CSP, X-Frame-Options, input sanitization |
 | **Single binary** | Go executable with embedded assets — nothing else needed |
 | **Dark theme** | Clean, modern UI that's easy on the eyes |
 
@@ -91,7 +91,6 @@ scrawl is designed for small trusted teams (5-10 users), not public internet exp
 - **SQL injection** — all queries use parameterized statements
 - **XSS** — Go's `html/template` auto-escapes all user content in HTML and JS contexts
 - **Security headers** — `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`
-- **Rate limiting** — 30 writes per minute per IP on create/edit/delete
 - **Input sanitization** — control characters stripped, title length capped at 200 chars
 - **Body size limit** — 128KB max on POST/PUT bodies
 - **ID validation** — only valid hex IDs accepted in URL paths

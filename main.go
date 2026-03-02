@@ -10,8 +10,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
-
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -96,45 +94,6 @@ func cacheStatic(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		next.ServeHTTP(w, r)
 	})
-}
-
-// rateLimiter tracks request timestamps per IP for write endpoints.
-var rateLimiter = struct {
-	sync.Mutex
-	reqs map[string][]time.Time
-}{reqs: make(map[string][]time.Time)}
-
-const (
-	rateWindow = time.Minute
-	rateLimit  = 30
-)
-
-func checkRateLimit(r *http.Request) bool {
-	ip := r.RemoteAddr
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		ip = strings.Split(fwd, ",")[0]
-	}
-
-	now := time.Now()
-	rateLimiter.Lock()
-	defer rateLimiter.Unlock()
-
-	cutoff := now.Add(-rateWindow)
-	times := rateLimiter.reqs[ip]
-	filtered := times[:0]
-	for _, t := range times {
-		if t.After(cutoff) {
-			filtered = append(filtered, t)
-		}
-	}
-
-	if len(filtered) >= rateLimit {
-		rateLimiter.reqs[ip] = filtered
-		return false
-	}
-
-	rateLimiter.reqs[ip] = append(filtered, now)
-	return true
 }
 
 var gzipPool = sync.Pool{

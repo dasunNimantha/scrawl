@@ -100,11 +100,6 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 const maxBodySize = 128 * 1024 // 128KB
 
 func handleCreate(w http.ResponseWriter, r *http.Request) {
-	if !checkRateLimit(r) {
-		http.Error(w, "rate limit exceeded, try again later", 429)
-		return
-	}
-
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
 	title := sanitize(strings.TrimSpace(r.FormValue("title")))
@@ -199,11 +194,6 @@ func handleEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !checkRateLimit(r) {
-		http.Error(w, "rate limit exceeded, try again later", 429)
-		return
-	}
-
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
 	title := sanitize(strings.TrimSpace(r.FormValue("title")))
@@ -265,11 +255,6 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validID.MatchString(id) {
 		http.NotFound(w, r)
-		return
-	}
-
-	if !checkRateLimit(r) {
-		http.Error(w, "rate limit exceeded, try again later", 429)
 		return
 	}
 
