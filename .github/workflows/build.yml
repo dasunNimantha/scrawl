@@ -3,6 +3,8 @@ name: Build
 on:
   push:
     branches: [master]
+    tags-ignore:
+      - "v*"
   pull_request:
     branches: [master]
 
@@ -24,9 +26,3 @@ jobs:
 
       - name: Build
         run: CGO_ENABLED=1 go build -ldflags="-s -w" -o scrawl .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: scrawl-linux-amd64
-          path: scrawl

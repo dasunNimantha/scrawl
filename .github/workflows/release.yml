@@ -21,6 +21,9 @@ jobs:
       - name: Install cross-compilation dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc gcc-aarch64-linux-gnu
 
+      - name: Test
+        run: go test -v -count=1 ./...
+
       - name: Build linux/amd64
         run: CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o scrawl-linux-amd64 .
 
