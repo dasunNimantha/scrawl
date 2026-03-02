@@ -1,0 +1,9 @@
+*.db
+*.db-wal
+*.db-shm
+.env
+.git
+.github
+screenshots
+scrawl
+scrawl.exe
