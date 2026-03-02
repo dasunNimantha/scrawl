@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Copy Link and Copy Text buttons on view page
 - Keyboard shortcuts: `Ctrl+Enter` save, `Tab` indent, `Esc` close modal
 - Dark theme with clean, modern UI
-- Gzip compression middleware
+- Gzip compression middleware with Content-Type detection
 - Security headers (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
 - Input sanitization (control character stripping, title length cap)
 - Body size limit (128KB)
@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cache headers for static assets
 - SQLite with WAL mode
 - Single binary deployment (embedded templates and static assets)
-- GitHub Actions CI pipeline
-- Dependabot for Go modules and GitHub Actions
+- Dockerfile with multi-stage Alpine build
+- GitHub Actions CI pipeline and release workflow
+- Dependabot with auto-merge for Go modules and GitHub Actions
 - MIT license
 
 [1.0.0]: https://github.com/dasunNimantha/scrawl/releases/tag/v1.0.0
