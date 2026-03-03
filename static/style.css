@@ -473,24 +473,88 @@ html, body {
     .sidebar {
         width: 100%;
         min-width: 100%;
-        max-height: 180px;
+        max-height: 160px;
         border-right: none;
         border-bottom: 1px solid var(--border);
     }
 
+    .sidebar-header {
+        padding: 12px 16px;
+    }
+
+    .sidebar-search {
+        padding: 6px 10px;
+    }
+
+    .entries-list {
+        padding: 4px;
+    }
+
+    .entry-item {
+        padding: 6px 10px;
+    }
+
     .main {
-        padding: 20px 16px;
+        padding: 16px;
+        align-items: stretch;
+    }
+
+    .editor {
+        max-width: 100%;
     }
 
     .input-title {
-        font-size: 22px;
+        font-size: 20px;
+        padding: 8px 0;
+        margin-bottom: 12px;
     }
 
     .input-body {
-        min-height: 250px;
+        min-height: 220px;
+        font-size: 13px;
+        padding: 12px;
+    }
+
+    .editor-footer {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .view-topbar {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        gap: 6px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
     }
 
     .view-title {
-        font-size: 22px;
+        font-size: 20px;
+    }
+
+    .view-body {
+        font-size: 13px;
+        padding: 14px;
+    }
+
+    .view-time {
+        font-size: 12px;
+        margin-bottom: 14px;
+    }
+
+    .modal {
+        padding: 20px;
+        max-width: 90%;
+    }
+
+    .success-banner {
+        font-size: 12px;
+        padding: 10px 12px;
+        margin-bottom: 16px;
+    }
+
+    .deleted-banner {
+        padding: 10px 12px;
+        margin-bottom: 16px;
     }
 }
