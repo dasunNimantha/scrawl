@@ -2,6 +2,7 @@
 
 [![Build](https://github.com/dasunNimantha/scrawl/actions/workflows/build.yml/badge.svg)](https://github.com/dasunNimantha/scrawl/actions/workflows/build.yml)
 [![Go](https://img.shields.io/github/go-mod/go-version/dasunNimantha/scrawl)](https://go.dev/)
+[![Docker](https://img.shields.io/docker/pulls/dasunnimantha/scrawl)](https://hub.docker.com/r/dasunnimantha/scrawl)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A blazingly fast, self-hosted text sharing app built with Go and SQLite. Drop in formatted text with emojis, indentation, and structure — get a shareable link instantly.
@@ -40,20 +41,37 @@ A blazingly fast, self-hosted text sharing app built with Go and SQLite. Drop in
 
 ## Quick Start
 
+### Docker Hub (recommended)
+
+```bash
+docker run -p 8080:8080 -v scrawl-data:/data dasunnimantha/scrawl
+```
+
+Open [http://localhost:8080](http://localhost:8080).
+
+### Docker Compose
+
+```yaml
+services:
+  scrawl:
+    image: dasunnimantha/scrawl
+    ports:
+      - "8080:8080"
+    volumes:
+      - scrawl-data:/data
+    restart: unless-stopped
+
+volumes:
+  scrawl-data:
+```
+
+### Build from source
+
 ```bash
 git clone https://github.com/dasunNimantha/scrawl.git
 cd scrawl
 go build -o scrawl .
 ./scrawl
-```
-
-Open [http://localhost:8080](http://localhost:8080).
-
-### Docker
-
-```bash
-docker build -t scrawl .
-docker run -p 8080:8080 -v scrawl-data:/data scrawl
 ```
 
 ## Configuration
