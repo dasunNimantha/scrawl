@@ -19,6 +19,7 @@ html, body {
     height: 100%;
     background: var(--bg);
     color: var(--text);
+    color-scheme: dark;
     font-family: var(--font-sans);
     font-size: 15px;
     line-height: 1.5;
