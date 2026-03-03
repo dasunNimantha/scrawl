@@ -45,6 +45,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("PUT /api/entries/{id}", handleEdit)
 	mux.HandleFunc("GET /api/entries/{id}/edit", handleEditForm)
 	mux.HandleFunc("DELETE /api/entries/{id}", handleDelete)
+	mux.HandleFunc("GET /e/{id}/download", handleDownload)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 	return mux
 }
@@ -801,6 +802,204 @@ func TestInputSanitization(t *testing.T) {
 	body := readBody(t, resp)
 	assertContains(t, body, "Padded Title", "title should be trimmed")
 	assertNotContains(t, body, "\x00", "null bytes should be stripped")
+}
+
+func TestDownloadEntry(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createTestEntry(t, srv.URL, "Download Test", "downloadable content here")
+
+	resp, err := http.Get(srv.URL + "/e/" + id + "/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "text/plain") {
+		t.Fatalf("expected text/plain content type, got %q", ct)
+	}
+
+	cd := resp.Header.Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") {
+		t.Fatalf("expected attachment disposition, got %q", cd)
+	}
+
+	body := readBody(t, resp)
+	if body != "downloadable content here" {
+		t.Fatalf("expected raw body content, got %q", body)
+	}
+}
+
+func TestDownloadEntry_NotFound(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/e/deadbeef/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateEntryWithTTL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	form := url.Values{"title": {"Expiring"}, "body": {"will expire"}, "ttl": {"1h"}}
+	resp, err := client.PostForm(srv.URL+"/api/entries", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 303 {
+		t.Fatalf("expected 303, got %d", resp.StatusCode)
+	}
+
+	id := strings.TrimPrefix(resp.Header.Get("Location"), "/e/")
+
+	entry, err := getEntry(id)
+	if err != nil {
+		t.Fatal("failed to get entry:", err)
+	}
+
+	if entry.ExpiresAt == nil {
+		t.Fatal("expected ExpiresAt to be set")
+	}
+}
+
+func TestCreateEntryWithoutTTL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	form := url.Values{"title": {"Permanent"}, "body": {"no expiry"}}
+	resp, err := client.PostForm(srv.URL+"/api/entries", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	id := strings.TrimPrefix(resp.Header.Get("Location"), "/e/")
+
+	entry, err := getEntry(id)
+	if err != nil {
+		t.Fatal("failed to get entry:", err)
+	}
+
+	if entry.ExpiresAt != nil {
+		t.Fatal("expected ExpiresAt to be nil for no-TTL entry")
+	}
+}
+
+func TestExpiredEntryNotVisible(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := generateID()
+	db.Exec("INSERT INTO entries (id, title, body, expires_at) VALUES (?, ?, ?, datetime('now', '-1 hour'))",
+		id, "Expired", "gone")
+
+	resp, err := http.Get(srv.URL + "/e/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected 404 for expired entry, got %d", resp.StatusCode)
+	}
+}
+
+func TestExpiredEntryNotInSidebar(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	db.Exec("INSERT INTO entries (id, title, body, expires_at) VALUES (?, ?, ?, datetime('now', '-1 hour'))",
+		"abcd1234", "Expired Sidebar", "gone")
+	createTestEntry(t, srv.URL, "Visible Entry", "still here")
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Visible Entry", "non-expired entry should appear")
+	assertNotContains(t, body, "Expired Sidebar", "expired entry should not appear in sidebar")
+}
+
+func TestViewEntryShowsDownloadButton(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createTestEntry(t, srv.URL, "Download Button", "content")
+
+	resp, err := http.Get(srv.URL + "/e/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Download", "download button")
+}
+
+func TestEditorShowsTTLSelect(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body := readBody(t, resp)
+	assertContains(t, body, "ttl-select", "TTL select element")
+	assertContains(t, body, "No expiry", "default no-expiry option")
 }
 
 // --- helpers ---
