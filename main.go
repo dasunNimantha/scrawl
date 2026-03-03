@@ -57,6 +57,7 @@ func main() {
 	mux.HandleFunc("PUT /api/entries/{id}", handleEdit)
 	mux.HandleFunc("GET /api/entries/{id}/edit", handleEditForm)
 	mux.HandleFunc("DELETE /api/entries/{id}", handleDelete)
+	mux.HandleFunc("POST /e/{id}/unlock", handleUnlock)
 	mux.HandleFunc("GET /e/{id}/download", handleDownload)
 	mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
 
@@ -71,19 +72,20 @@ func main() {
 func initDB() error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS entries (
-			id         TEXT PRIMARY KEY,
-			title      TEXT NOT NULL,
-			body       TEXT NOT NULL,
-			created_at DATETIME DEFAULT (datetime('now')),
-			expires_at DATETIME
+			id            TEXT PRIMARY KEY,
+			title         TEXT NOT NULL,
+			body          TEXT NOT NULL,
+			created_at    DATETIME DEFAULT (datetime('now')),
+			expires_at    DATETIME,
+			password_hash TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at DESC);
 	`)
 	if err != nil {
 		return err
 	}
-	// migrate: add expires_at if upgrading from older schema
 	db.Exec("ALTER TABLE entries ADD COLUMN expires_at DATETIME")
+	db.Exec("ALTER TABLE entries ADD COLUMN password_hash TEXT")
 	return nil
 }
 

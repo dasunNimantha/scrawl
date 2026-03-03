@@ -24,8 +24,10 @@
         </aside>
         <main class="main">
             <div id="content-area" class="editor">
-                {{if .ViewEntry}}
-                    {{template "view-content" .ViewEntry}}
+                {{if .LockedEntry}}
+                    {{template "unlock-form" dict "Entry" .LockedEntry}}
+                {{else if .ViewEntry}}
+                    {{template "view-content" dict "Entry" .ViewEntry}}
                 {{else}}
                 <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
                     {{template "form-fields" .}}
@@ -46,6 +48,7 @@
     </div>
 
     <script>
+    var _currentPassword = '';
     function copyLink(id) {
         const url = window.location.origin + '/e/' + id;
         navigator.clipboard.writeText(url).then(() => {
@@ -64,6 +67,7 @@
     function showEditor() {
         history.pushState(null, '', '/');
         clearActive();
+        _currentPassword = '';
         document.getElementById('content-area').innerHTML = `
             <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
                 <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
@@ -71,6 +75,7 @@
                 <div class="editor-footer">
                     <span class="char-count">0 chars · 0 words</span>
                     <div class="form-actions">
+                        <input type="password" name="password" placeholder="Password (optional)" class="input-password">
                         <select name="ttl" class="ttl-select">
                             <option value="">No expiry</option>
                             <option value="1h">1 hour</option>
@@ -86,12 +91,15 @@
         htmx.process(document.getElementById('content-area'));
         document.querySelector('.input-title').focus();
     }
-    function confirmDelete(id) {
+    function confirmDelete(id, pw) {
         const modal = document.getElementById('delete-modal');
         modal.classList.add('visible');
         document.getElementById('confirm-delete-btn').onclick = function() {
             closeModal();
-            htmx.ajax('DELETE', '/api/entries/' + id, { target: '#content-area', swap: 'innerHTML' });
+            htmx.ajax('DELETE', '/api/entries/' + id, {
+                target: '#content-area', swap: 'innerHTML',
+                values: pw ? { password: pw } : {}
+            });
         };
     }
     function closeModal() {
@@ -131,8 +139,10 @@
         const counter = el.closest('form').querySelector('.char-count');
         if (counter) counter.textContent = chars + ' chars · ' + words + ' words';
     }
-    function downloadEntry(id) {
-        window.location.href = '/e/' + id + '/download';
+    function downloadEntry(id, pw) {
+        let url = '/e/' + id + '/download';
+        if (pw) url += '?password=' + encodeURIComponent(pw);
+        window.location.href = url;
     }
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeModal();
@@ -157,6 +167,7 @@
 <div class="editor-footer">
     <span class="char-count">0 chars · 0 words</span>
     <div class="form-actions">
+        <input type="password" name="password" placeholder="Password (optional)" class="input-password">
         <select name="ttl" class="ttl-select">
             <option value="">No expiry</option>
             <option value="1h">1 hour</option>
@@ -172,7 +183,7 @@
 {{define "entry-items"}}
 {{range .Entries}}
 <a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()">
-    <span class="entry-title">{{.Title}}</span>
+    <span class="entry-title">{{if .Locked}}<span class="lock-icon">&#128274;</span> {{end}}{{.Title}}</span>
     <span class="entry-time">{{timeago .CreatedAt}}</span>
 </a>
 {{else}}
@@ -183,7 +194,7 @@
 {{define "entry-list"}}
 {{range .Entries}}
 <a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()">
-    <span class="entry-title">{{.Title}}</span>
+    <span class="entry-title">{{if .Locked}}<span class="lock-icon">&#128274;</span> {{end}}{{.Title}}</span>
     <span class="entry-time">{{timeago .CreatedAt}}</span>
 </a>
 {{end}}
@@ -197,26 +208,43 @@
 {{end}}
 {{end}}
 
+{{define "unlock-form"}}
+<div class="unlock-container">
+    <h2 class="unlock-title">&#128274; {{.Entry.Title}}</h2>
+    <p class="unlock-text">This entry is password-protected.</p>
+    {{if .Error}}<p class="unlock-error">{{.Error}}</p>{{end}}
+    <form hx-post="/e/{{.Entry.ID}}/unlock" hx-target="#content-area" hx-swap="innerHTML" class="unlock-form">
+        <input type="password" name="password" placeholder="Enter password" class="input-password unlock-input" required autofocus>
+        <button type="submit" class="btn btn-primary">Unlock</button>
+    </form>
+</div>
+<script>setActive('{{.Entry.ID}}');</script>
+{{end}}
+
 {{define "view-content"}}
 <article class="view-content">
     <div class="view-topbar">
-        <button class="btn btn-small" id="copytxt-btn-{{.ID}}" onclick="copyText('{{.ID}}')">Copy Text</button>
-        <button class="btn btn-small" id="copy-btn-{{.ID}}" onclick="copyLink('{{.ID}}')">Copy Link</button>
-        <button class="btn btn-small" onclick="downloadEntry('{{.ID}}')">Download</button>
-        <button class="btn btn-small" hx-get="/api/entries/{{.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
-        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.ID}}')">Delete</button>
+        <button class="btn btn-small" id="copytxt-btn-{{.Entry.ID}}" onclick="copyText('{{.Entry.ID}}')">Copy Text</button>
+        <button class="btn btn-small" id="copy-btn-{{.Entry.ID}}" onclick="copyLink('{{.Entry.ID}}')">Copy Link</button>
+        <button class="btn btn-small" onclick="downloadEntry('{{.Entry.ID}}', _currentPassword)">Download</button>
+        <button class="btn btn-small" hx-get="/api/entries/{{.Entry.ID}}/edit{{if .Password}}?password={{.Password}}{{end}}" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
+        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.Entry.ID}}', _currentPassword)">Delete</button>
     </div>
-    <h1 class="view-title">{{.Title}}</h1>
-    <time class="view-time">{{.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}{{if .ExpiresAt}} · expires {{.ExpiresAt.Format "Jan 2, 2006 at 3:04 PM"}}{{end}}</time>
-    <pre class="view-body">{{.Body}}</pre>
+    <h1 class="view-title">{{.Entry.Title}}</h1>
+    <time class="view-time">{{.Entry.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}{{if .Entry.ExpiresAt}} · expires {{.Entry.ExpiresAt.Format "Jan 2, 2006 at 3:04 PM"}}{{end}}{{if .Entry.Locked}} · &#128274; locked{{end}}</time>
+    <pre class="view-body">{{.Entry.Body}}</pre>
 </article>
-<script>setActive('{{.ID}}');</script>
+<script>
+setActive('{{.Entry.ID}}');
+_currentPassword = '{{.Password}}';
+</script>
 {{end}}
 
 {{define "edit-form"}}
-<form hx-put="/api/entries/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML">
-    <input type="text" name="title" value="{{.Title}}" class="input-title" required autofocus>
-    <textarea name="body" class="input-body" required oninput="updateCount(this)">{{.Body}}</textarea>
+<form hx-put="/api/entries/{{.Entry.ID}}" hx-target="#content-area" hx-swap="innerHTML">
+    {{if .Password}}<input type="hidden" name="password" value="{{.Password}}">{{end}}
+    <input type="text" name="title" value="{{.Entry.Title}}" class="input-title" required autofocus>
+    <textarea name="body" class="input-body" required oninput="updateCount(this)">{{.Entry.Body}}</textarea>
     <div class="editor-footer">
         <span class="char-count">0 chars · 0 words</span>
         <div class="form-actions">
@@ -227,7 +255,7 @@
                 <option value="7d">7 days</option>
                 <option value="30d">30 days</option>
             </select>
-            <button type="button" class="btn btn-small" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML">Cancel</button>
+            <button type="button" class="btn btn-small" hx-get="/e/{{.Entry.ID}}" hx-target="#content-area" hx-swap="innerHTML">Cancel</button>
             <button type="submit" class="btn btn-primary">Save Changes</button>
         </div>
     </div>
@@ -248,16 +276,17 @@
     <div class="view-topbar">
         <button class="btn btn-small" id="copytxt-btn-{{.Entry.ID}}" onclick="copyText('{{.Entry.ID}}')">Copy Text</button>
         <button class="btn btn-small" id="copy-btn-{{.Entry.ID}}" onclick="copyLink('{{.Entry.ID}}')">Copy Link</button>
-        <button class="btn btn-small" onclick="downloadEntry('{{.Entry.ID}}')">Download</button>
-        <button class="btn btn-small" hx-get="/api/entries/{{.Entry.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
-        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.Entry.ID}}')">Delete</button>
+        <button class="btn btn-small" onclick="downloadEntry('{{.Entry.ID}}', _currentPassword)">Download</button>
+        <button class="btn btn-small" hx-get="/api/entries/{{.Entry.ID}}/edit{{if .Password}}?password={{.Password}}{{end}}" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
+        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.Entry.ID}}', _currentPassword)">Delete</button>
     </div>
     <h1 class="view-title">{{.Entry.Title}}</h1>
     <time class="view-time">{{.Entry.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}{{if .Entry.ExpiresAt}} · expires {{.Entry.ExpiresAt.Format "Jan 2, 2006 at 3:04 PM"}}{{end}}</time>
     <pre class="view-body">{{.Entry.Body}}</pre>
 </article>
 <script>
-document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
+_currentPassword = '{{.Password}}';
+document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{if .Locked}}<span class="lock-icon">&#128274;</span> {{end}}{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
 htmx.process(document.getElementById('entries-list'));
 setActive('{{.Entry.ID}}');
 setTimeout(() => {
@@ -276,16 +305,16 @@ setTimeout(() => {
     <div class="view-topbar">
         <button class="btn btn-small" id="copytxt-btn-{{.ID}}" onclick="copyText('{{.ID}}')">Copy Text</button>
         <button class="btn btn-small" id="copy-btn-{{.ID}}" onclick="copyLink('{{.ID}}')">Copy Link</button>
-        <button class="btn btn-small" onclick="downloadEntry('{{.ID}}')">Download</button>
+        <button class="btn btn-small" onclick="downloadEntry('{{.ID}}', _currentPassword)">Download</button>
         <button class="btn btn-small" hx-get="/api/entries/{{.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
-        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.ID}}')">Delete</button>
+        <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.ID}}', _currentPassword)">Delete</button>
     </div>
     <h1 class="view-title">{{.Entry.Title}}</h1>
     <time class="view-time">just now{{if .Entry.ExpiresAt}} · expires {{.Entry.ExpiresAt.Format "Jan 2, 2006 at 3:04 PM"}}{{end}}</time>
     <pre class="view-body">{{.Entry.Body}}</pre>
 </article>
 <script>
-document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
+document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{if .Locked}}<span class="lock-icon">&#128274;</span> {{end}}{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{end}}`;
 htmx.process(document.getElementById('entries-list'));
 history.pushState(null, '', '/e/{{.ID}}');
 setActive('{{.ID}}');
@@ -300,6 +329,7 @@ setActive('{{.ID}}');
     <div class="editor-footer">
         <span class="char-count">0 chars · 0 words</span>
         <div class="form-actions">
+            <input type="password" name="password" placeholder="Password (optional)" class="input-password">
             <select name="ttl" class="ttl-select">
                 <option value="">No expiry</option>
                 <option value="1h">1 hour</option>
@@ -312,7 +342,8 @@ setActive('{{.ID}}');
     </div>
 </form>
 <script>
-document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{else}}<div class="empty-state">No entries yet</div>{{end}}`;
+_currentPassword = '';
+document.getElementById('entries-list').innerHTML = `{{range .Entries}}<a href="/e/{{.ID}}" class="entry-item" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML" hx-push-url="true" onclick="event.preventDefault()"><span class="entry-title">{{if .Locked}}<span class="lock-icon">&#128274;</span> {{end}}{{.Title}}</span><span class="entry-time">{{timeago .CreatedAt}}</span></a>{{else}}<div class="empty-state">No entries yet</div>{{end}}`;
 htmx.process(document.getElementById('entries-list'));
 history.pushState(null, '', '/');
 clearActive();
