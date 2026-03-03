@@ -27,12 +27,17 @@ A blazingly fast, self-hosted text sharing app built with Go and SQLite. Drop in
 | **Instant sharing** | Create an entry, get a permanent link |
 | **Formatting preserved** | Emojis, indentation, tabs, whitespace — all intact |
 | **Full CRUD** | Create, view, edit, delete entries |
-| **Sidebar** | Recent entries always visible, filterable search |
+| **Password protection** | Optionally lock entries with a password (bcrypt hashed) |
+| **Expiring entries** | Optional TTL: 1 hour, 1 day, 7 days, 30 days — default: never |
+| **Download as .txt** | Download any entry as a plain text file |
+| **Word/char count** | Live word and character count in the editor |
+| **Sidebar** | Recent entries always visible, filterable search, lock icon for protected entries |
 | **Copy buttons** | Copy shareable link or entry text to clipboard |
 | **Keyboard shortcuts** | `Ctrl+Enter` save, `Tab` indent, `Esc` close modal |
 | **Gzip compression** | All responses compressed on the fly |
 | **Security headers** | CSP, X-Frame-Options, input sanitization |
 | **Single binary** | Go executable with embedded assets — nothing else needed |
+| **Mobile responsive** | Optimized layout for phones and tablets |
 | **Dark theme** | Clean, modern UI that's easy on the eyes |
 
 ![Editor](screenshots/editor.png)
@@ -92,7 +97,7 @@ PORT=3000 DB_PATH=/data/scrawl.db ./scrawl
 | **Backend** | Go (stdlib `net/http`, `html/template`, `embed`) |
 | **Database** | SQLite via `mattn/go-sqlite3` (WAL mode) |
 | **Frontend** | Vanilla HTML/CSS/JS + HTMX (embedded locally) |
-| **Dependencies** | 1 (`go-sqlite3`) |
+| **Dependencies** | 2 (`go-sqlite3`, `x/crypto` for bcrypt) |
 
 ## Build
 
@@ -117,6 +122,7 @@ scrawl is designed for small trusted teams (5-10 users), not public internet exp
 - **XSS** — Go's `html/template` auto-escapes all user content in HTML and JS contexts
 - **Security headers** — `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`
 - **Input sanitization** — control characters stripped, title length capped at 200 chars
+- **Password hashing** — bcrypt with default cost for entry protection
 - **Body size limit** — 128KB max on POST/PUT bodies
 - **ID validation** — only valid hex IDs accepted in URL paths
 - **Dependabot** — automated dependency updates for Go modules and GitHub Actions
@@ -127,7 +133,7 @@ scrawl is designed for small trusted teams (5-10 users), not public internet exp
 scrawl/
 ├── main.go              # server, routes, middleware, security
 ├── handlers.go          # HTTP handlers, DB queries, validation
-├── handlers_test.go     # integration tests (25 tests)
+├── handlers_test.go     # integration tests (49 tests)
 ├── go.mod
 ├── templates/
 │   └── index.html       # all templates (single file)
@@ -141,10 +147,12 @@ scrawl/
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/` | Home page with editor |
-| `POST` | `/api/entries` | Create entry |
+| `POST` | `/api/entries` | Create entry (optional `password` and `ttl` fields) |
 | `GET` | `/e/{id}` | View entry (shareable link) |
+| `POST` | `/e/{id}/unlock` | Unlock a password-protected entry |
 | `PUT` | `/api/entries/{id}` | Update entry |
 | `DELETE` | `/api/entries/{id}` | Delete entry |
+| `GET` | `/e/{id}/download` | Download entry as `.txt` |
 | `GET` | `/api/entries` | List entries (HTMX) |
 | `GET` | `/api/entries/{id}/edit` | Edit form (HTMX) |
 
