@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>scrawl</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/htmx.min.js"></script>
 </head>
@@ -66,7 +67,7 @@
         document.getElementById('content-area').innerHTML = `
             <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
                 <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
-                <textarea name="body" placeholder="Paste your text here...\n\n  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
+                <textarea name="body" placeholder="Paste your text here..." class="input-body" required></textarea>
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary">Save</button>
                 </div>
@@ -132,7 +133,7 @@
 
 {{define "form-fields"}}
 <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
-<textarea name="body" placeholder="Paste your text here...&#10;&#10;  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
+<textarea name="body" placeholder="Paste your text here..." class="input-body" required></textarea>
 <div class="form-actions">
     <button type="submit" class="btn btn-primary">Save</button>
 </div>
@@ -246,7 +247,7 @@ setActive('{{.ID}}');
 <div class="deleted-banner">Entry deleted.</div>
 <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
     <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
-    <textarea name="body" placeholder="Paste your text here...&#10;&#10;  Indentation, emojis 🎉, and formatting are preserved." class="input-body" required></textarea>
+    <textarea name="body" placeholder="Paste your text here..." class="input-body" required></textarea>
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">Save</button>
     </div>
