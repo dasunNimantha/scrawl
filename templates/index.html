@@ -67,9 +67,19 @@
         document.getElementById('content-area').innerHTML = `
             <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
                 <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
-                <textarea name="body" placeholder="Paste your text here..." class="input-body" required></textarea>
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">Save</button>
+                <textarea name="body" placeholder="Paste your text here..." class="input-body" required oninput="updateCount(this)"></textarea>
+                <div class="editor-footer">
+                    <span class="char-count">0 chars · 0 words</span>
+                    <div class="form-actions">
+                        <select name="ttl" class="ttl-select">
+                            <option value="">No expiry</option>
+                            <option value="1h">1 hour</option>
+                            <option value="1d">1 day</option>
+                            <option value="7d">7 days</option>
+                            <option value="30d">30 days</option>
+                        </select>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
                 </div>
             </form>
         `;
@@ -114,6 +124,16 @@
         const path = window.location.pathname;
         if (path.startsWith('/e/')) setActive(path.split('/e/')[1]);
     });
+    function updateCount(el) {
+        const text = el.value;
+        const chars = text.length;
+        const words = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+        const counter = el.closest('form').querySelector('.char-count');
+        if (counter) counter.textContent = chars + ' chars · ' + words + ' words';
+    }
+    function downloadEntry(id) {
+        window.location.href = '/e/' + id + '/download';
+    }
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeModal();
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -133,9 +153,19 @@
 
 {{define "form-fields"}}
 <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
-<textarea name="body" placeholder="Paste your text here..." class="input-body" required></textarea>
-<div class="form-actions">
-    <button type="submit" class="btn btn-primary">Save</button>
+<textarea name="body" placeholder="Paste your text here..." class="input-body" required oninput="updateCount(this)"></textarea>
+<div class="editor-footer">
+    <span class="char-count">0 chars · 0 words</span>
+    <div class="form-actions">
+        <select name="ttl" class="ttl-select">
+            <option value="">No expiry</option>
+            <option value="1h">1 hour</option>
+            <option value="1d">1 day</option>
+            <option value="7d">7 days</option>
+            <option value="30d">30 days</option>
+        </select>
+        <button type="submit" class="btn btn-primary">Save</button>
+    </div>
 </div>
 {{end}}
 
@@ -172,11 +202,12 @@
     <div class="view-topbar">
         <button class="btn btn-small" id="copytxt-btn-{{.ID}}" onclick="copyText('{{.ID}}')">Copy Text</button>
         <button class="btn btn-small" id="copy-btn-{{.ID}}" onclick="copyLink('{{.ID}}')">Copy Link</button>
+        <button class="btn btn-small" onclick="downloadEntry('{{.ID}}')">Download</button>
         <button class="btn btn-small" hx-get="/api/entries/{{.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
         <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.ID}}')">Delete</button>
     </div>
     <h1 class="view-title">{{.Title}}</h1>
-    <time class="view-time">{{.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}</time>
+    <time class="view-time">{{.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}{{if .ExpiresAt}} · expires {{.ExpiresAt.Format "Jan 2, 2006 at 3:04 PM"}}{{end}}</time>
     <pre class="view-body">{{.Body}}</pre>
 </article>
 <script>setActive('{{.ID}}');</script>
@@ -185,12 +216,28 @@
 {{define "edit-form"}}
 <form hx-put="/api/entries/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML">
     <input type="text" name="title" value="{{.Title}}" class="input-title" required autofocus>
-    <textarea name="body" class="input-body" required>{{.Body}}</textarea>
-    <div class="form-actions">
-        <button type="button" class="btn btn-small" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save Changes</button>
+    <textarea name="body" class="input-body" required oninput="updateCount(this)">{{.Body}}</textarea>
+    <div class="editor-footer">
+        <span class="char-count">0 chars · 0 words</span>
+        <div class="form-actions">
+            <select name="ttl" class="ttl-select">
+                <option value="">No expiry</option>
+                <option value="1h">1 hour</option>
+                <option value="1d">1 day</option>
+                <option value="7d">7 days</option>
+                <option value="30d">30 days</option>
+            </select>
+            <button type="button" class="btn btn-small" hx-get="/e/{{.ID}}" hx-target="#content-area" hx-swap="innerHTML">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
     </div>
 </form>
+<script>
+(function() {
+    const ta = document.querySelector('.input-body');
+    if (ta) updateCount(ta);
+})();
+</script>
 {{end}}
 
 {{define "edited-response"}}
@@ -201,11 +248,12 @@
     <div class="view-topbar">
         <button class="btn btn-small" id="copytxt-btn-{{.Entry.ID}}" onclick="copyText('{{.Entry.ID}}')">Copy Text</button>
         <button class="btn btn-small" id="copy-btn-{{.Entry.ID}}" onclick="copyLink('{{.Entry.ID}}')">Copy Link</button>
+        <button class="btn btn-small" onclick="downloadEntry('{{.Entry.ID}}')">Download</button>
         <button class="btn btn-small" hx-get="/api/entries/{{.Entry.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
         <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.Entry.ID}}')">Delete</button>
     </div>
     <h1 class="view-title">{{.Entry.Title}}</h1>
-    <time class="view-time">{{.Entry.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}</time>
+    <time class="view-time">{{.Entry.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}{{if .Entry.ExpiresAt}} · expires {{.Entry.ExpiresAt.Format "Jan 2, 2006 at 3:04 PM"}}{{end}}</time>
     <pre class="view-body">{{.Entry.Body}}</pre>
 </article>
 <script>
@@ -228,11 +276,12 @@ setTimeout(() => {
     <div class="view-topbar">
         <button class="btn btn-small" id="copytxt-btn-{{.ID}}" onclick="copyText('{{.ID}}')">Copy Text</button>
         <button class="btn btn-small" id="copy-btn-{{.ID}}" onclick="copyLink('{{.ID}}')">Copy Link</button>
+        <button class="btn btn-small" onclick="downloadEntry('{{.ID}}')">Download</button>
         <button class="btn btn-small" hx-get="/api/entries/{{.ID}}/edit" hx-target="#content-area" hx-swap="innerHTML">Edit</button>
         <button class="btn btn-danger btn-small" onclick="confirmDelete('{{.ID}}')">Delete</button>
     </div>
     <h1 class="view-title">{{.Entry.Title}}</h1>
-    <time class="view-time">just now</time>
+    <time class="view-time">just now{{if .Entry.ExpiresAt}} · expires {{.Entry.ExpiresAt.Format "Jan 2, 2006 at 3:04 PM"}}{{end}}</time>
     <pre class="view-body">{{.Entry.Body}}</pre>
 </article>
 <script>
@@ -247,9 +296,19 @@ setActive('{{.ID}}');
 <div class="deleted-banner">Entry deleted.</div>
 <form hx-post="/api/entries" hx-target="#content-area" hx-swap="innerHTML">
     <input type="text" name="title" placeholder="Heading" class="input-title" required autofocus>
-    <textarea name="body" placeholder="Paste your text here..." class="input-body" required></textarea>
-    <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Save</button>
+    <textarea name="body" placeholder="Paste your text here..." class="input-body" required oninput="updateCount(this)"></textarea>
+    <div class="editor-footer">
+        <span class="char-count">0 chars · 0 words</span>
+        <div class="form-actions">
+            <select name="ttl" class="ttl-select">
+                <option value="">No expiry</option>
+                <option value="1h">1 hour</option>
+                <option value="1d">1 day</option>
+                <option value="7d">7 days</option>
+                <option value="30d">30 days</option>
+            </select>
+            <button type="submit" class="btn btn-primary">Save</button>
+        </div>
     </div>
 </form>
 <script>

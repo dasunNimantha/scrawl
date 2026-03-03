@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -45,6 +46,8 @@ func main() {
 		log.Fatal("failed to initialize database:", err)
 	}
 
+	startCleanup()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", handleIndex)
@@ -54,6 +57,7 @@ func main() {
 	mux.HandleFunc("PUT /api/entries/{id}", handleEdit)
 	mux.HandleFunc("GET /api/entries/{id}/edit", handleEditForm)
 	mux.HandleFunc("DELETE /api/entries/{id}", handleDelete)
+	mux.HandleFunc("GET /e/{id}/download", handleDownload)
 	mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
 
 	handler := securityHeaders(gzipHandler(mux))
@@ -70,11 +74,26 @@ func initDB() error {
 			id         TEXT PRIMARY KEY,
 			title      TEXT NOT NULL,
 			body       TEXT NOT NULL,
-			created_at DATETIME DEFAULT (datetime('now'))
+			created_at DATETIME DEFAULT (datetime('now')),
+			expires_at DATETIME
 		);
 		CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at DESC);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// migrate: add expires_at if upgrading from older schema
+	db.Exec("ALTER TABLE entries ADD COLUMN expires_at DATETIME")
+	return nil
+}
+
+func startCleanup() {
+	go func() {
+		for {
+			time.Sleep(10 * time.Minute)
+			cleanupExpired()
+		}
+	}()
 }
 
 func securityHeaders(next http.Handler) http.Handler {

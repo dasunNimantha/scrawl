@@ -18,6 +18,7 @@ type Entry struct {
 	Title     string
 	Body      string
 	CreatedAt time.Time
+	ExpiresAt *time.Time
 }
 
 var tmpl *template.Template
@@ -99,6 +100,21 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
 const maxBodySize = 128 * 1024 // 128KB
 
+var ttlOptions = map[string]time.Duration{
+	"1h":  time.Hour,
+	"1d":  24 * time.Hour,
+	"7d":  7 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
+}
+
+func parseTTL(val string) *time.Time {
+	if d, ok := ttlOptions[val]; ok {
+		t := time.Now().Add(d)
+		return &t
+	}
+	return nil
+}
+
 func handleCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
@@ -115,15 +131,22 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := generateID()
+	expiresAt := parseTTL(r.FormValue("ttl"))
 
-	_, err := db.Exec("INSERT INTO entries (id, title, body) VALUES (?, ?, ?)", id, title, body)
+	var expiresStr *string
+	if expiresAt != nil {
+		s := expiresAt.Format(time.RFC3339)
+		expiresStr = &s
+	}
+
+	_, err := db.Exec("INSERT INTO entries (id, title, body, expires_at) VALUES (?, ?, ?, ?)", id, title, body, expiresStr)
 	if err != nil {
 		log.Println("error creating entry:", err)
 		http.Error(w, "Internal Server Error", 500)
 		return
 	}
 
-	entry := Entry{ID: id, Title: title, Body: body, CreatedAt: time.Now()}
+	entry := Entry{ID: id, Title: title, Body: body, CreatedAt: time.Now(), ExpiresAt: expiresAt}
 	entries, _ := listEntries(0)
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -208,7 +231,14 @@ func handleEdit(w http.ResponseWriter, r *http.Request) {
 		title = title[:maxTitleLen]
 	}
 
-	result, err := db.Exec("UPDATE entries SET title = ?, body = ? WHERE id = ?", title, body, id)
+	expiresAt := parseTTL(r.FormValue("ttl"))
+	var expiresStr *string
+	if expiresAt != nil {
+		s := expiresAt.Format(time.RFC3339)
+		expiresStr = &s
+	}
+
+	result, err := db.Exec("UPDATE entries SET title = ?, body = ?, expires_at = ? WHERE id = ?", title, body, expiresStr, id)
 	if err != nil {
 		log.Println("error updating entry:", err)
 		http.Error(w, "Internal Server Error", 500)
@@ -282,13 +312,31 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func handleDownload(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validID.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
+
+	entry, err := getEntry(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+entry.Title+".txt\"")
+	w.Write([]byte(entry.Body))
+}
+
 // listEntries returns entries without body for sidebar display.
 func listEntries(page int) ([]Entry, error) {
 	limit := 20
 	offset := page * limit
 
 	rows, err := db.Query(
-		"SELECT id, title, created_at FROM entries ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+		"SELECT id, title, created_at FROM entries WHERE expires_at IS NULL OR expires_at > datetime('now') ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
 		limit, offset,
 	)
 	if err != nil {
@@ -313,11 +361,29 @@ func listEntries(page int) ([]Entry, error) {
 func getEntry(id string) (*Entry, error) {
 	var entry Entry
 	var createdAt string
-	err := db.QueryRow("SELECT id, title, body, created_at FROM entries WHERE id = ?", id).
-		Scan(&entry.ID, &entry.Title, &entry.Body, &createdAt)
+	var expiresAt *string
+	err := db.QueryRow(
+		"SELECT id, title, body, created_at, expires_at FROM entries WHERE id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))", id,
+	).Scan(&entry.ID, &entry.Title, &entry.Body, &createdAt, &expiresAt)
 	if err != nil {
 		return nil, err
 	}
 	entry.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if expiresAt != nil {
+		t, _ := time.Parse(time.RFC3339, *expiresAt)
+		entry.ExpiresAt = &t
+	}
 	return &entry, nil
+}
+
+// cleanupExpired removes entries past their expiration.
+func cleanupExpired() {
+	result, err := db.Exec("DELETE FROM entries WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')")
+	if err != nil {
+		log.Println("cleanup error:", err)
+		return
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		log.Printf("cleaned up %d expired entries", n)
+	}
 }
