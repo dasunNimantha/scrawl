@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-03
+
+### Added
+
+- Optional password protection for entries using bcrypt hashing
+- Lock icon in sidebar for protected entries
+- Unlock form with error feedback for incorrect passwords
+- Password verification on view, edit, delete, and download actions
+- `POST /e/{id}/unlock` endpoint for password verification
+- 14 new integration tests for password-related flows (49 total)
+- Mobile-responsive improvements for editor and view layouts
+
 ## [1.2.0] - 2026-03-03
 
 ### Added
@@ -51,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot with auto-merge for Go modules and GitHub Actions
 - MIT license
 
+[1.3.0]: https://github.com/dasunNimantha/scrawl/releases/tag/v1.3.0
 [1.2.0]: https://github.com/dasunNimantha/scrawl/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dasunNimantha/scrawl/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dasunNimantha/scrawl/releases/tag/v1.0.0
