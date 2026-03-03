@@ -42,6 +42,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/entries", handleCreate)
 	mux.HandleFunc("GET /api/entries", handleList)
 	mux.HandleFunc("GET /e/{id}", handleView)
+	mux.HandleFunc("POST /e/{id}/unlock", handleUnlock)
 	mux.HandleFunc("PUT /api/entries/{id}", handleEdit)
 	mux.HandleFunc("GET /api/entries/{id}/edit", handleEditForm)
 	mux.HandleFunc("DELETE /api/entries/{id}", handleDelete)
@@ -1044,5 +1045,386 @@ func assertNotContains(t *testing.T, body, substr, label string) {
 	t.Helper()
 	if strings.Contains(body, substr) {
 		t.Errorf("expected %s to NOT contain %q", label, substr)
+	}
+}
+
+func createLockedTestEntry(t *testing.T, baseURL, title, body, password string) string {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	form := url.Values{"title": {title}, "body": {body}, "password": {password}}
+	resp, err := client.PostForm(baseURL+"/api/entries", form)
+	if err != nil {
+		t.Fatal("create locked entry failed:", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 303 {
+		t.Fatalf("expected 303, got %d", resp.StatusCode)
+	}
+
+	return strings.TrimPrefix(resp.Header.Get("Location"), "/e/")
+}
+
+func TestCreateEntryWithPassword(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Secret Entry", "secret body", "mypass123")
+
+	entry, err := getEntry(id)
+	if err != nil {
+		t.Fatal("failed to get entry:", err)
+	}
+
+	if !entry.IsLocked() {
+		t.Fatal("expected entry to be locked")
+	}
+}
+
+func TestLockedEntryShowsUnlockForm(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Locked View", "hidden content", "pass123")
+
+	resp, err := http.Get(srv.URL + "/e/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	assertContains(t, body, "unlock-form", "unlock form")
+	assertContains(t, body, "password-protected", "protection message")
+	assertContains(t, body, "Locked View", "title should be visible")
+	assertNotContains(t, body, "hidden content", "body should NOT be visible")
+}
+
+func TestLockedEntryHTMX_ShowsUnlockForm(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "HTMX Locked", "secret stuff", "pass456")
+
+	req, _ := http.NewRequest("GET", srv.URL+"/e/"+id, nil)
+	req.Header.Set("HX-Request", "true")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body := readBody(t, resp)
+	assertContains(t, body, "unlock-form", "unlock form in HTMX response")
+	assertNotContains(t, body, "secret stuff", "body should NOT be visible")
+}
+
+func TestUnlockWithCorrectPassword(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Unlock Test", "revealed content", "correctpw")
+
+	form := url.Values{"password": {"correctpw"}}
+	req, _ := http.NewRequest("POST", srv.URL+"/e/"+id+"/unlock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	assertContains(t, body, "revealed content", "body should be visible after unlock")
+	assertContains(t, body, "Unlock Test", "title should be visible")
+	assertContains(t, body, "view-content", "should render view-content template")
+}
+
+func TestUnlockWithWrongPassword(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Wrong PW", "still hidden", "rightpw")
+
+	form := url.Values{"password": {"wrongpw"}}
+	req, _ := http.NewRequest("POST", srv.URL+"/e/"+id+"/unlock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Incorrect password", "error message")
+	assertContains(t, body, "unlock-form", "should show unlock form again")
+	assertNotContains(t, body, "still hidden", "body should NOT be visible")
+}
+
+func TestEditLockedEntry(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Edit Locked", "original locked", "editpw")
+
+	form := url.Values{"title": {"Edited Locked"}, "body": {"edited locked body"}, "password": {"editpw"}}
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/entries/"+id, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Edited Locked", "updated title")
+}
+
+func TestEditLockedEntryWrongPassword(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "No Edit", "protected", "rightpw")
+
+	form := url.Values{"title": {"Hacked"}, "body": {"hacked body"}, "password": {"wrongpw"}}
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/entries/"+id, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 403 {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
+	}
+}
+
+func TestDeleteLockedEntry(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Delete Locked", "will be deleted", "delpw")
+
+	form := url.Values{"password": {"delpw"}}
+	req, _ := http.NewRequest("DELETE", srv.URL+"/api/entries/"+id, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Entry deleted", "deleted confirmation")
+}
+
+func TestDeleteLockedEntryWrongPassword(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "No Delete", "protected", "rightpw")
+
+	form := url.Values{"password": {"wrongpw"}}
+	req, _ := http.NewRequest("DELETE", srv.URL+"/api/entries/"+id, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 403 {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
+	}
+}
+
+func TestDownloadLockedEntry(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Download Locked", "locked download", "dlpw")
+
+	resp, err := http.Get(srv.URL + "/e/" + id + "/download?password=dlpw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 with correct password, got %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	if body != "locked download" {
+		t.Fatalf("expected body content, got %q", body)
+	}
+}
+
+func TestDownloadLockedEntryWrongPassword(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "DL No Access", "secret", "rightpw")
+
+	resp, err := http.Get(srv.URL + "/e/" + id + "/download?password=wrongpw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 403 {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
+	}
+}
+
+func TestLockedEntryInSidebar(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	createLockedTestEntry(t, srv.URL, "Sidebar Locked", "body", "pw123")
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Sidebar Locked", "locked entry title in sidebar")
+	assertContains(t, body, "lock-icon", "lock icon in sidebar")
+}
+
+func TestUnlockedEntryNoPasswordRequired(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createTestEntry(t, srv.URL, "Open Entry", "freely accessible")
+
+	resp, err := http.Get(srv.URL + "/e/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	assertContains(t, body, "freely accessible", "body should be visible without password")
+	assertNotContains(t, body, "unlock-form", "should NOT show unlock form")
+}
+
+func TestEditFormLockedEntry(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "Edit Form Locked", "locked body", "formpw")
+
+	resp, err := http.Get(srv.URL + "/api/entries/" + id + "/edit?password=formpw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 with correct password, got %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	assertContains(t, body, "Edit Form Locked", "pre-filled title")
+	assertContains(t, body, "locked body", "pre-filled body")
+}
+
+func TestEditFormLockedEntryWrongPassword(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	id := createLockedTestEntry(t, srv.URL, "No Edit Form", "protected", "rightpw")
+
+	resp, err := http.Get(srv.URL + "/api/entries/" + id + "/edit?password=wrongpw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 403 {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
 	}
 }

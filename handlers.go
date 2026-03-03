@@ -4,21 +4,43 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Entry struct {
-	ID        string
-	Title     string
-	Body      string
-	CreatedAt time.Time
-	ExpiresAt *time.Time
+	ID           string
+	Title        string
+	Body         string
+	CreatedAt    time.Time
+	ExpiresAt    *time.Time
+	PasswordHash *string
+	Locked       bool // set by listEntries for sidebar icon
+}
+
+func (e *Entry) IsLocked() bool {
+	return e.PasswordHash != nil && *e.PasswordHash != ""
+}
+
+func hashPassword(password string) (string, error) {
+	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(h), err
+}
+
+func verifyPassword(entry *Entry, password string) bool {
+	if !entry.IsLocked() {
+		return true
+	}
+	return bcrypt.CompareHashAndPassword([]byte(*entry.PasswordHash), []byte(password)) == nil
 }
 
 var tmpl *template.Template
@@ -29,6 +51,13 @@ const maxTitleLen = 200
 
 func init() {
 	funcMap := template.FuncMap{
+		"dict": func(pairs ...any) map[string]any {
+			m := make(map[string]any, len(pairs)/2)
+			for i := 0; i < len(pairs)-1; i += 2 {
+				m[pairs[i].(string)] = pairs[i+1]
+			}
+			return m
+		},
 		"timeago": func(t time.Time) string {
 			d := time.Since(t)
 			switch {
@@ -139,14 +168,25 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		expiresStr = &s
 	}
 
-	_, err := db.Exec("INSERT INTO entries (id, title, body, expires_at) VALUES (?, ?, ?, ?)", id, title, body, expiresStr)
+	var pwHash *string
+	if pw := r.FormValue("password"); pw != "" {
+		h, err := hashPassword(pw)
+		if err != nil {
+			log.Println("error hashing password:", err)
+			http.Error(w, "Internal Server Error", 500)
+			return
+		}
+		pwHash = &h
+	}
+
+	_, err := db.Exec("INSERT INTO entries (id, title, body, expires_at, password_hash) VALUES (?, ?, ?, ?, ?)", id, title, body, expiresStr, pwHash)
 	if err != nil {
 		log.Println("error creating entry:", err)
 		http.Error(w, "Internal Server Error", 500)
 		return
 	}
 
-	entry := Entry{ID: id, Title: title, Body: body, CreatedAt: time.Now(), ExpiresAt: expiresAt}
+	entry := Entry{ID: id, Title: title, Body: body, CreatedAt: time.Now(), ExpiresAt: expiresAt, PasswordHash: pwHash}
 	entries, _ := listEntries(0)
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -198,8 +238,25 @@ func handleView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if entry.IsLocked() {
+		data := map[string]any{"Entry": entry}
+		if r.Header.Get("HX-Request") == "true" {
+			tmpl.ExecuteTemplate(w, "unlock-form", data)
+			return
+		}
+		entries, _ := listEntries(0)
+		data["Entries"] = entries
+		tmpl.ExecuteTemplate(w, "index.html", map[string]any{
+			"Entries":     entries,
+			"LockedEntry": entry,
+		})
+		return
+	}
+
 	if r.Header.Get("HX-Request") == "true" {
-		tmpl.ExecuteTemplate(w, "view-content", entry)
+		tmpl.ExecuteTemplate(w, "view-content", map[string]any{
+			"Entry": entry,
+		})
 		return
 	}
 
@@ -207,6 +264,34 @@ func handleView(w http.ResponseWriter, r *http.Request) {
 	tmpl.ExecuteTemplate(w, "index.html", map[string]any{
 		"Entries":   entries,
 		"ViewEntry": entry,
+	})
+}
+
+func handleUnlock(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validID.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
+
+	entry, err := getEntry(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	password := r.FormValue("password")
+	if !verifyPassword(entry, password) {
+		tmpl.ExecuteTemplate(w, "unlock-form", map[string]any{
+			"Entry": entry,
+			"Error": "Incorrect password",
+		})
+		return
+	}
+
+	tmpl.ExecuteTemplate(w, "view-content", map[string]any{
+		"Entry":    entry,
+		"Password": password,
 	})
 }
 
@@ -218,6 +303,17 @@ func handleEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
+	entry, err := getEntry(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if entry.IsLocked() && !verifyPassword(entry, r.FormValue("password")) {
+		http.Error(w, "incorrect password", 403)
+		return
+	}
 
 	title := sanitize(strings.TrimSpace(r.FormValue("title")))
 	body := sanitize(r.FormValue("body"))
@@ -251,13 +347,14 @@ func handleEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, _ := getEntry(id)
+	entry, _ = getEntry(id)
 
 	if r.Header.Get("HX-Request") == "true" {
 		entries, _ := listEntries(0)
 		tmpl.ExecuteTemplate(w, "edited-response", map[string]any{
-			"Entry":   entry,
-			"Entries": entries,
+			"Entry":    entry,
+			"Entries":  entries,
+			"Password": r.FormValue("password"),
 		})
 		return
 	}
@@ -278,13 +375,41 @@ func handleEditForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl.ExecuteTemplate(w, "edit-form", entry)
+	password := r.URL.Query().Get("password")
+	if entry.IsLocked() && !verifyPassword(entry, password) {
+		http.Error(w, "incorrect password", 403)
+		return
+	}
+
+	tmpl.ExecuteTemplate(w, "edit-form", map[string]any{
+		"Entry":    entry,
+		"Password": password,
+	})
 }
 
 func handleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validID.MatchString(id) {
 		http.NotFound(w, r)
+		return
+	}
+
+	entry, err := getEntry(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	password := r.URL.Query().Get("password")
+	if password == "" && r.Body != nil {
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if vals, e := url.ParseQuery(string(b)); e == nil {
+			password = vals.Get("password")
+		}
+	}
+
+	if entry.IsLocked() && !verifyPassword(entry, password) {
+		http.Error(w, "incorrect password", 403)
 		return
 	}
 
@@ -325,6 +450,11 @@ func handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if entry.IsLocked() && !verifyPassword(entry, r.URL.Query().Get("password")) {
+		http.Error(w, "incorrect password", 403)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+entry.Title+".txt\"")
 	w.Write([]byte(entry.Body))
@@ -336,7 +466,7 @@ func listEntries(page int) ([]Entry, error) {
 	offset := page * limit
 
 	rows, err := db.Query(
-		"SELECT id, title, created_at FROM entries WHERE expires_at IS NULL OR expires_at > datetime('now') ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+		"SELECT id, title, created_at, password_hash IS NOT NULL FROM entries WHERE expires_at IS NULL OR expires_at > datetime('now') ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
 		limit, offset,
 	)
 	if err != nil {
@@ -348,7 +478,7 @@ func listEntries(page int) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdAt string
-		if err := rows.Scan(&e.ID, &e.Title, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Title, &createdAt, &e.Locked); err != nil {
 			continue
 		}
 		e.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -363,8 +493,8 @@ func getEntry(id string) (*Entry, error) {
 	var createdAt string
 	var expiresAt *string
 	err := db.QueryRow(
-		"SELECT id, title, body, created_at, expires_at FROM entries WHERE id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))", id,
-	).Scan(&entry.ID, &entry.Title, &entry.Body, &createdAt, &expiresAt)
+		"SELECT id, title, body, created_at, expires_at, password_hash FROM entries WHERE id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))", id,
+	).Scan(&entry.ID, &entry.Title, &entry.Body, &createdAt, &expiresAt, &entry.PasswordHash)
 	if err != nil {
 		return nil, err
 	}
@@ -373,6 +503,7 @@ func getEntry(id string) (*Entry, error) {
 		t, _ := time.Parse(time.RFC3339, *expiresAt)
 		entry.ExpiresAt = &t
 	}
+	entry.Locked = entry.IsLocked()
 	return &entry, nil
 }
 
