@@ -9,7 +9,7 @@ COPY . .
 
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /scrawl .
 
-FROM alpine:3.23
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates
 
